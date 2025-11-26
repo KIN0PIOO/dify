@@ -1,0 +1,37 @@
+{
+  "name": "dify-chat-extension",
+  "displayName": "Dify Chat Extension",
+  "description": "VSCode 안에서 Dify Chatting Flow를 사용할 수 있는 전용 Chat UI",
+  "version": "0.0.3",
+  "publisher": "yourname",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "activationEvents": [
+    "onView:difyChatView"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "difyChat",
+          "title": "Dify",
+          "icon": "media/dify.svg"
+        }
+      ]
+    },
+    "views": {
+      "difyChat": [
+        {
+          "id": "difyChatView",
+          "name": "Dify Chat",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
