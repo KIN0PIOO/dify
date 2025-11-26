@@ -4,6 +4,9 @@ const fetch = (...args) => import("node-fetch").then(({default: fetch}) => fetch
 const API_URL = "https://ai-platform-deploy.koreacentral.cloudapp.azure.com:3000/v1/chat-messages";
 const API_KEY = "app-Ek5DUANnjnWbczf5NekimGgE";
 
+/* ==========================================================
+    EXTENSION ENTRY
+=========================================================== */
 function activate(context) {
 
     const provider = {
@@ -12,8 +15,8 @@ function activate(context) {
             webviewView.webview.html = getHtml();
 
             webviewView.webview.onDidReceiveMessage(async (data) => {
-                if (data.type === "send") {
-                    const reply = await callDify(data.text, data.files || []);
+                if(data.type === "send"){
+                    const reply = await callDify(data.text, data.files);
                     webviewView.webview.postMessage({ type:"reply", text:reply });
                 }
             });
@@ -25,99 +28,138 @@ function activate(context) {
     );
 }
 
-async function callDify(text, files = []) {
+/* ==========================================================
+    🔥 md_upload = [{name,type,base64}] 형식으로 변환하여 전송
+=========================================================== */
+async function callDify(text, files) {
+
+    /**
+     * 📌 변환 규칙
+     *  files = [{name, base64WithMime}]
+     *  ↓↓↓
+     *  inputs.md_upload = [{name,type:"base64",base64}]
+     */
+    const md_upload = files.map(f => ({
+        name: f.name,
+        type: "base64",
+        base64: f.base64.replace(/^data:.*;base64,/, "")  // MIME 제거 필수
+    }));
+
+    const payload = {
+        query: text || " ",
+        inputs: { md_upload },  // 🔥 Dify 요구 형식 충족
+        response_mode: "blocking",
+        user: "vscode-vsc"
+    };
+
     const res = await fetch(API_URL, {
         method:"POST",
         headers:{
             "Authorization": `Bearer ${API_KEY}`,
             "Content-Type":"application/json"
         },
-        body:JSON.stringify({
-            query: text,
-            inputs: {},
-            response_mode: "blocking",
-            user: "vscode-user",
-            files: files
-        })
+        body:JSON.stringify(payload)
     }).then(r=>r.json());
 
-    return res?.answer ?? JSON.stringify(res);
+    return res?.answer || res?.text || JSON.stringify(res,null,2);
 }
 
+/* ==========================================================
+   WEBVIEW UI — Base64 파일을 md_upload Object로 만들도록 수정
+=========================================================== */
 function getHtml(){
 return `
 <style>
-body { font-family: sans-serif; padding: 10px; }
-#chat { height: 300px; border:1px solid #333; padding:10px; overflow-y:auto; margin-bottom:10px; }
-textarea{width:100%;height:60px;margin-top:5px;}
-button{margin-top:5px;width:100%;padding:10px;background:#4F8BFF;color:white;border:none;cursor:pointer;}
-#fileInput{margin-top:5px;width:100%;}
-.file-info{background:#f0f0f0;padding:5px;margin-top:5px;border-radius:3px;font-size:12px;}
-.remove-file{margin-left:10px;color:red;cursor:pointer;}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Segoe UI,Roboto;height:100vh;display:flex;flex-direction:column;background:var(--vscode-editor-background);color:var(--vscode-editor-foreground)}
+.header{padding:14px 18px;background:var(--vscode-sideBar-background);border-bottom:1px solid var(--vscode-panel-border);display:flex;align-items:center;gap:10px}
+.logo{width:22px;height:22px;border-radius:6px;background:#667eea;color:white;font-weight:bold;display:flex;align-items:center;justify-content:center}
+#chat{flex:1;padding:16px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+.message{display:flex;gap:10px}
+.message.user{flex-direction:row-reverse}
+.avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold}
+.message.user .avatar{background:#667eea;color:#fff}
+.message.assistant .avatar{background:#444;color:#fff}
+.message-content{max-width:75%;padding:10px 14px;border-radius:12px;line-height:1.45}
+.message.user .message-content{background:#667eea;color:white}
+.message.assistant .message-content{background:var(--vscode-input-background);border:1px solid var(--vscode-input-border)}
+
+.input-container{padding:12px 18px;border-top:1px solid var(--vscode-panel-border);background:var(--vscode-sideBar-background)}
+#fileList{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.file-info{padding:6px 10px;border-radius:12px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}
+.remove-file{cursor:pointer;margin-left:6px}
+textarea{flex:1;padding:10px;border-radius:10px;background:var(--vscode-input-background);border:1px solid var(--vscode-input-border);color:var(--vscode-input-foreground)}
+button{padding:10px 16px;border:none;border-radius:10px;background:#667eea;color:white;font-weight:bold;cursor:pointer}
+.file-upload-btn{padding:10px;background:var(--vscode-button-secondaryBackground);border-radius:10px;cursor:pointer}
+#fileInput{display:none}
 </style>
 
-<h2>Dify Chat</h2>
+<div class="header"><div class="logo">D</div><b>Dify Chat</b></div>
 <div id="chat"></div>
-<input type="file" id="fileInput" multiple />
-<div id="fileList"></div>
-<textarea id="input" placeholder="메시지 입력..."></textarea>
-<button id="send">Send</button>
+
+<div class="input-container">
+    <div id="fileList"></div>
+    <div style="display:flex;gap:8px">
+        <label for="fileInput" class="file-upload-btn">📎</label>
+        <input id="fileInput" type="file" multiple />
+        <textarea id="input" placeholder="메시지를 입력하세요..."></textarea>
+        <button id="send">전송</button>
+    </div>
+</div>
 
 <script>
 const vscode = acquireVsCodeApi();
-const chat=document.getElementById("chat");
-const input=document.getElementById("input");
-const fileInput=document.getElementById("fileInput");
-const fileList=document.getElementById("fileList");
-let selectedFiles = [];
+let uploadedFiles=[];
 
-fileInput.onchange = async (e) => {
-    const files = Array.from(e.target.files);
-    for(const file of files) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            const base64 = ev.target.result.split(',')[1];
-            selectedFiles.push({
-                type: "transfer_method",
-                transfer_method: "local_file",
-                upload_file_id: "",
-                url: base64
-            });
-            updateFileList();
+// Base64 + 파일명 저장
+fileInput.onchange = e=>{
+    [...e.target.files].forEach(file=>{
+        const r=new FileReader();
+        r.onload = x =>{
+            uploadedFiles.push({ name:file.name, base64:x.target.result });
+            updateUI();
         };
-        reader.readAsDataURL(file);
-    }
-    fileInput.value = "";
+        r.readAsDataURL(file);
+    });
+    e.target.value="";
 };
 
-function updateFileList() {
-    fileList.innerHTML = selectedFiles.map((f, i) =>
-        '<div class="file-info">파일 ' + (i+1) + '<span class="remove-file" onclick="removeFile('+i+')">✕</span></div>'
-    ).join('');
+function updateUI(){
+    fileList.innerHTML="";
+    uploadedFiles.forEach((f,i)=>{
+        fileList.innerHTML += \`<div class="file-info">📄 \${f.name}<span class="remove-file" onclick="removeFile(\${i})">✕</span></div>\`;
+    });
 }
+function removeFile(i){ uploadedFiles.splice(i,1); updateUI(); }
 
-function removeFile(index) {
-    selectedFiles.splice(index, 1);
-    updateFileList();
-}
+// 전송 handler
+send.onclick=()=>{
+    const text = input.value.trim();
+    if(!text && uploadedFiles.length===0) return;
 
-document.getElementById("send").onclick = ()=>{
-    if(!input.value.trim()) return;
-    const msg = input.value;
-    const files = [...selectedFiles];
-    add("You", msg + (files.length > 0 ? ' [파일 ' + files.length + '개]' : ''));
-    vscode.postMessage({type:"send", text:msg, files:files});
+    addMsg("user", text || "(📄 파일 "+uploadedFiles.length+"개)");
+    vscode.postMessage({
+        type:"send",
+        text:text,
+        files: uploadedFiles        // 🔥 md_upload object 생성용 원본 전달
+    });
+
     input.value="";
-    selectedFiles = [];
-    updateFileList();
+    uploadedFiles=[]; updateUI();
 };
 
-window.addEventListener("message",(e)=>{
-    if(e.data.type==="reply") add("Dify",e.data.text);
+// 응답
+window.addEventListener("message",e=>{
+    if(e.data.type==="reply") addMsg("assistant",e.data.text);
 });
 
-function add(who,msg){
-    chat.innerHTML += "<p><b>"+who+":</b> "+msg+"</p>";
+// 메시지 렌더
+function addMsg(role,msg){
+    chat.innerHTML += \`
+    <div class="message \${role}">
+    <div class="avatar">\${role=="user"?"U":"D"}</div>
+    <div class="message-content">\${msg}</div>
+    </div>\`;
     chat.scrollTop = chat.scrollHeight;
 }
 </script>
